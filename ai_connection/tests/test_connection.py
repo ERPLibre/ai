@@ -76,3 +76,52 @@ class TestConnection(TransactionCase):
         )
         with self.assertRaises(UserError):
             connection._run("get_date", tools=tool, max_iterations=1)
+
+    def test_a_failing_tool_is_answered_and_the_loop_goes_on(self):
+        """A tool that raises must still produce a role="tool" message.
+
+        Without it the tool call stays unanswered: a provider that
+        validates the exchange refuses the next iteration, so one failing
+        tool takes the whole conversation down instead of letting the
+        model read the error and try something else.
+        """
+        from .fake_models import CLIENTS
+
+        CLIENTS.clear()
+        tool = self.env.ref("ai_tool.current_date")
+        connection = self.env["ai.connection"].create(
+            {
+                "name": "Failing Tool Connection",
+                "kind": "failing_tool",
+            }
+        )
+        response = connection._run("go", tools=tool)
+        self.assertEqual(response[0], "I saw the error and stopped.")
+        self.assertTrue(CLIENTS)
+        second_call = CLIENTS[-1].seen[-1]
+        answers = [
+            message
+            for message in second_call
+            if message.get("role") == "tool"
+        ]
+        self.assertEqual(len(answers), 1)
+        self.assertIn("error", answers[0]["content"])
+
+    def test_an_unoffered_tool_does_not_raise(self):
+        """tools defaults to None, and a model can name a tool anyway.
+
+        Filtering None raises AttributeError, which reaches the caller as
+        a traceback rather than as the "unknown tool" the loop already
+        handles by skipping.
+        """
+        from .fake_models import CLIENTS
+
+        CLIENTS.clear()
+        connection = self.env["ai.connection"].create(
+            {
+                "name": "Failing Tool Connection",
+                "kind": "failing_tool",
+            }
+        )
+        with self.assertRaises(UserError):
+            connection._run("go", max_iterations=2)

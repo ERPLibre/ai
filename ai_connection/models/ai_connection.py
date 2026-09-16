@@ -75,7 +75,12 @@ class AiConnection(models.Model):
                     iteration,
                 )
             for tool_call in response["tool_calls"]:
-                tool = tools.filtered(
+                # tools defaults to None, and a model can name a tool it
+                # was never offered: filtering None raises AttributeError
+                # here, which reaches the caller as a traceback rather
+                # than as the "unknown tool" the loop already handles by
+                # skipping.
+                tool = tools and tools.filtered(
                     lambda t, tool_call=tool_call: t.name == tool_call["name"]
                 )
                 if tool:
@@ -85,17 +90,26 @@ class AiConnection(models.Model):
                                 self._process_tool_call(tool, tool_call, record)
                             )
                     except Exception as e:
-                        getattr(
-                            self,
-                            f"_process_tool_call_result_{self.kind}",
-                            self._process_tool_call_result,
-                        )(
-                            tool,
-                            {
-                                "error": str(e),
-                                "type": type(e).__name__,
-                            },
-                            tool_call,
+                        # The result is APPENDED, like the happy path
+                        # above. Dropping it leaves the tool call without
+                        # its role="tool" answer, and a provider that
+                        # validates the exchange refuses the next
+                        # iteration -- so a tool that fails once takes the
+                        # whole conversation down instead of letting the
+                        # model read the error and try something else.
+                        messages.append(
+                            getattr(
+                                self,
+                                f"_process_tool_call_result_{self.kind}",
+                                self._process_tool_call_result,
+                            )(
+                                tool,
+                                {
+                                    "error": str(e),
+                                    "type": type(e).__name__,
+                                },
+                                tool_call,
+                            )
                         )
         raise UserError(
             self.env._("Iterations reached the maximum allowed (%s)", max_iterations)
