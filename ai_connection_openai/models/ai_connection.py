@@ -114,6 +114,15 @@ class AiConnection(models.Model):
     openai_api_key = fields.Char(groups="base.group_system")
 
     def _get_client_openai(self, tools):
+        # The temperature is read from the client, not from the call:
+        # handle_message() takes **kwargs and drops them, so the
+        # temperature _run_ai passes never reaches the request. Without
+        # this argument the payload carries temperature: null and the
+        # field on the form has no effect at all.
         return OpenaiClient(
-            tools, url=self.url, model=self.model, api_key=self.openai_api_key
+            tools,
+            url=self.url,
+            model=self.model,
+            api_key=self.openai_api_key,
+            temperature=self.temperature,
         )
